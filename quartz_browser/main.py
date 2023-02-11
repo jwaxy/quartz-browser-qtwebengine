@@ -20,8 +20,7 @@ from PyQt5.QtWidgets import ( QApplication, QMainWindow, QWidget,
     QTabWidget )
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PyQt5.QtNetwork import QNetworkRequest
-from PyQt5.QtWebKit import QWebSettings
-from PyQt5.QtWebKitWidgets import QWebPage, QWebFrame
+from PyQt5.QtWebEngineWidgets import QWebEnginePage, QWebEngineSettings
 
 from ui_settings_dialog import Ui_SettingsDialog
 from bookmark_manager import Bookmarks_Dialog, Add_Bookmark_Dialog, History_Dialog, icon_dir
@@ -53,14 +52,15 @@ class Main(QMainWindow):
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.settings = QSettings(1, 0, "quartz-browser","Quartz", self)
         self.opensettings()
-        self.websettings = QWebSettings.globalSettings()
-        self.websettings.setAttribute(QWebSettings.DnsPrefetchEnabled, True)
-        self.websettings.setMaximumPagesInCache(10)
-        self.websettings.setIconDatabasePath(icon_dir)
-        self.websettings.setAttribute(QWebSettings.JavascriptCanOpenWindows, True)
-        self.websettings.setAttribute(QWebSettings.JavascriptCanCloseWindows, True)
+        self.websettings = QWebEngineSettings.globalSettings()
+        self.websettings.setAttribute(QWebEngineSettings.DnsPrefetchEnabled, True)
+        # self.websettings.setMaximumPagesInCache(10) TODO: find alternative for this
+        # self.websettings.setIconDatabasePath(icon_dir) TODO: find alternative for this
+        # self.websettings.setAttribute(QWebEngineSettings.JavascriptCanOpenWindows, True) TODO: find alternative for this
+        # self.websettings.setAttribute(QWebEngineSettings.JavascriptCanCloseWindows, True) TODO: find alternative for this
         if webkit.enable_adblock:
-            self.websettings.setUserStyleSheetUrl(QUrl.fromLocalFile(program_dir + 'userContent.css'))
+            # self.websettings.setUserStyleSheetUrl(QUrl.fromLocalFile(program_dir + 'userContent.css')) TODO: IMPORTANT: find alternative for this
+            pass
         # Import Downloads and Bookmarks
         self.dwnldsmodel = DownloadsModel(self.downloads, QApplication.instance())
         self.dwnldsmodel.deleteDownloadsRequested.connect(self.deleteDownloads)
@@ -226,7 +226,7 @@ class Main(QMainWindow):
         pbarLayout = QGridLayout(self.pbar)
         pbarLayout.setContentsMargins(0,0,0,0)
 
-        self.line = webkit.UrlEdit(self.pbar)
+        self.line = webkit.UrlEdit(self.pbar) # webkit?? aaaaa
         self.line.openUrlRequested.connect(self.Enter)
         self.line.textEdited.connect(self.urlsuggestions)
         self.line.downloadRequested.connect(self.download_requested_file)
@@ -268,7 +268,7 @@ class Main(QMainWindow):
         """ Creates a new tab and add to QTabWidget
             applysettings() must be called after adding each tab"""
         if not webview_tab:
-            webview_tab = webkit.MyWebView(self.tabWidget, networkmanager)
+            webview_tab = webkit.MyWebView(self.tabWidget)
         webview_tab.windowCreated.connect(self.addTab)
         webview_tab.loadStarted.connect(self.onLoadStart)
         webview_tab.loadFinished.connect(self.onLoadFinish)
@@ -278,7 +278,7 @@ class Main(QMainWindow):
         webview_tab.iconChanged.connect(self.onIconChange)
         webview_tab.videoListRequested.connect(self.getVideos)
         webview_tab.page().printRequested.connect(self.printpage)
-        webview_tab.page().downloadRequested.connect(self.download_requested_file)
+        webview_tab.page().profile().downloadRequested.connect(self.download_requested_file)
         webview_tab.page().unsupportedContent.connect(self.handleUnsupportedContent)
         webview_tab.page().linkHovered.connect(self.onLinkHover)
         webview_tab.page().windowCloseRequested.connect(self.closeRequestedTab)
@@ -640,7 +640,7 @@ class Main(QMainWindow):
             self.tabWidget.currentWidget().page().setViewportSize(contentsize)
             img = QPixmap(contentsize)
             painter = QPainter(img)
-            self.tabWidget.currentWidget().page().mainFrame().render(painter, QWebFrame.AllLayers)
+            self.tabWidget.currentWidget().page().mainFrame().render(painter, QWebEnginePage.AllLayers)
             painter.end()
             self.tabWidget.currentWidget().page().setViewportSize(viewportsize)
             icon = img.scaledToWidth(184, 1).copy(0,0, 180, 120)
@@ -710,7 +710,7 @@ class Main(QMainWindow):
         self.tabWidget.currentWidget().findText(text)
     def findback(self):
         text = self.line.text()
-        self.tabWidget.currentWidget().findText(text, QWebPage.FindBackward)
+        self.tabWidget.currentWidget().findText(text, QWebEnginePage.FindBackward)
 
 #####################  View Settings  ###################
     def zoomin(self):
@@ -727,12 +727,12 @@ class Main(QMainWindow):
 
     def loadimages(self, state):
         """ TOggles image loading on/off"""
-        self.websettings.setAttribute(QWebSettings.AutoLoadImages, state)
+        self.websettings.setAttribute(QWebEngineSettings.AutoLoadImages, state)
         self.loadimagesval = bool(state)
 
     def setjavascript(self, state):
         """ Toggles js on/off """
-        self.websettings.setAttribute(QWebSettings.JavascriptEnabled, state)
+        self.websettings.setAttribute(QWebEngineSettings.JavascriptEnabled, state)
         self.javascriptenabledval = bool(state)
 
     def setUserAgentDesktop(self, checked):
@@ -853,9 +853,9 @@ class Main(QMainWindow):
             self.websettings.setUserStyleSheetUrl(QUrl.fromLocalFile(program_dir + 'userContent.css'))
         else:
             self.websettings.setUserStyleSheetUrl(QUrl(''))
-        self.websettings.setAttribute(QWebSettings.AutoLoadImages, self.loadimagesval)
+        self.websettings.setAttribute(QWebEngineSettings.AutoLoadImages, self.loadimagesval)
         self.loadimagesaction.setChecked(self.loadimagesval)
-        self.websettings.setAttribute(QWebSettings.JavascriptEnabled, self.javascriptenabledval)
+        self.websettings.setAttribute(QWebEngineSettings.JavascriptEnabled, self.javascriptenabledval)
         self.javascriptmode.setChecked(self.javascriptenabledval)
         if webkit.useragent_mode == 'Mobile':
             self.useragent_mode_mobile.setChecked(True)
@@ -863,12 +863,12 @@ class Main(QMainWindow):
             self.useragent_mode_custom.setChecked(True)
         else:
             self.useragent_mode_desktop.setChecked(True)
-        self.websettings.setFontSize(QWebSettings.MinimumFontSize, self.minfontsizeval)
-        self.websettings.setFontFamily(QWebSettings.StandardFont, self.standardfontval)
-        self.websettings.setFontFamily(QWebSettings.SansSerifFont, self.sansfontval)
-        self.websettings.setFontFamily(QWebSettings.SerifFont, self.seriffontval)
-        self.websettings.setFontFamily(QWebSettings.FixedFont, self.fixedfontval)
-#        self.websettings.setFontSize(QWebSettings.DefaultFontSize, 14)
+        self.websettings.setFontSize(QWebEngineSettings.MinimumFontSize, self.minfontsizeval)
+        self.websettings.setFontFamily(QWebEngineSettings.StandardFont, self.standardfontval)
+        self.websettings.setFontFamily(QWebEngineSettings.SansSerifFont, self.sansfontval)
+        self.websettings.setFontFamily(QWebEngineSettings.SerifFont, self.seriffontval)
+        self.websettings.setFontFamily(QWebEngineSettings.FixedFont, self.fixedfontval)
+#        self.websettings.setFontSize(QWebEngineSettings.DefaultFontSize, 14)
 
     def enableKiosk(self):
         webkit.KIOSK_MODE = True
@@ -947,14 +947,10 @@ class DownloadDialog(QDialog, ui_download_confirm.Ui_downloadDialog):
 
 
 def main():
-    global app, networkmanager, cookiejar
+    global app, cookiejar
     app = QApplication(sys.argv)
     app.setOrganizationName("quartz-browser")
     app.setApplicationName("Quartz")
-    # NetworkAccessManager must be global variable, otherwise javascript will not be rendered
-    cookiejar = webkit.MyCookieJar(QApplication.instance())
-    networkmanager = webkit.NetworkAccessManager(QApplication.instance())
-    networkmanager.setCookieJar(cookiejar)
     window = Main()
     # Maximize after startup or Show normal
     if hasArg('--kiosk', sys.argv):

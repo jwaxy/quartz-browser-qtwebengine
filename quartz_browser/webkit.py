@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
-from PyQt5.QtCore import QSettings, QUrl, QByteArray, QTimer, pyqtSignal, QFileInfo, Qt
+from PyQt5.QtCore import QSettings, QUrl, QByteArray, QTimer, pyqtSignal, QFileInfo, Qt, QThread, QFile, QIODevice, qDebug
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication, QInputDialog, QLineEdit, QFileDialog, QMenu, QMenu, QAction, QMessageBox, QToolButton
-from PyQt5.QtWebKitWidgets import QWebPage, QWebView
+from PyQt5.QtWebEngineWidgets import QWebEnginePage, QWebEngineView, QWebEngineProfile
+from PyQt5.QtWebEngineCore import QWebEngineCookieStore, QWebEngineUrlRequestInterceptor, QWebEngineUrlRequestInfo
 from PyQt5.QtNetwork import QNetworkRequest, QNetworkCookie, QNetworkCookieJar, QNetworkAccessManager
 
 from common import *
 import os, shlex, subprocess
 from urllib import parse
+import adblockparser
 
 KIOSK_MODE = False
 
@@ -20,114 +22,42 @@ useragent_mode = 'Desktop'
 useragent_custom = 'Chromium 34.0'
 video_player_command = 'ffplay'
 
-blocklist = program_dir + 'blocklist.txt'
+blocklist = program_dir + 'easylist.txt'
 
-with open(blocklist, 'r') as ab_file:
-    lines = ab_file.readlines()
-    ad_strings = [line.rstrip() for line in lines]
-
-
-class MyCookieJar(QNetworkCookieJar):
-    """ Reimplemented QNetworkCookieJar to get cookie import/export feature"""
+class RequestInterceptor(QWebEngineUrlRequestInterceptor):
     def __init__(self, parent=None):
-        super(MyCookieJar, self).__init__(parent)
-        self.importCookies()
+        super().__init__(parent)
+        self.client = adblockparser.AdblockRules(["https://easylist.to/easylist/easylist.txt"])
+        file = QFile(blocklist)
+        if not file.exists():
+            qDebug("No easylist.txt file found.")
+            return
 
-    def importCookies(self):
-        """ Window object must contain QSetting object 'self.settings' before calling this"""
-        settings = QSettings('quartz-browser', 'cookies', self)
-        cookiesValue = settings.value("Cookies", QByteArray())
-        cookiesList = QNetworkCookie.parseCookies(cookiesValue)
-        self.setAllCookies(cookiesList)
+        if file.open(QIODevice.ReadOnly | QIODevice.Text):
+            easyListTxt = str(file.readAll(), encoding="utf-8")
+            self.client = adblockparser.AdblockRules(easyListTxt.splitlines())
+        file.close()
 
-    def exportCookies(self):
-        cookiesArray = QByteArray()
-        cookieList = self.allCookies()
-        for cookie in cookieList:
-            cookiesArray.append( bytes(cookie.toRawForm()).decode('utf-8') + "\n" ) # cookie.ToRawForm() returns ByteArray
-        settings = QSettings('quartz-browser', 'cookies', self)
-        settings.setValue("Cookies", cookiesArray)
+    def interceptRequest(self, info: QWebEngineUrlRequestInfo):
+        url = info.requestUrl()
+        if self.client.should_block(url.toString()):
+            info.block(True)
 
-    def clearCookies(self):
-        self.setAllCookies([])
-
-class NetworkAccessManager(QNetworkAccessManager):
-    def __init__(self, *args, **kwargs):
-        super(NetworkAccessManager, self).__init__(*args, **kwargs)
-        self.authenticationRequired.connect(self.provideAuthentication)
-
-    def provideAuthentication(self, reply, auth):
-        username = QInputDialog.getText(None, "Authentication", "Enter your username:", QLineEdit.Normal)
-        if username[1]:
-            auth.setUser(username[0])
-            password = QInputDialog.getText(None, "Authentication", "Enter your password:", QLineEdit.Password)
-            if password[1]:
-                auth.setPassword(password[0])
-
-    def createRequest(self, op, request, device=None):
-        """ Reimplemented to enable adblock/url-block """
-        if op!=self.GetOperation or request.url().scheme()=='file':
-            return QNetworkAccessManager.createRequest(self, op, request, device)
-        url = request.url().toString()
-        block = False
-        # Font blocking capability
-        if block_fonts:
-            if '.ttf' in url or '.woff' in url:
-              block = True
-        # AdBlocking Feature
-        if enable_adblock:
-            for ad in ad_strings:
-                if ad in url:
-                    block = True
-                    break
-
-        if block:
-            #print("Blocked: "+url)
-            return QNetworkAccessManager.createRequest(self, op, QNetworkRequest(QUrl()), device)
-        #if ("mkv" in url):
-        #    print(url)
-        #    for header in request.rawHeaderList():
-        #        print(request.rawHeader(header))
-
-        reply = QNetworkAccessManager.createRequest(self, op, request, device)
-        #reply.metaDataChanged.connect(self.gotMetadata)
-        return reply
-
-    def gotMetadata(self):
-        ''' Prints raw Headers of requested url '''
-        reply = self.sender()
-        #if str_(reply.rawHeader(b'Content-Type')) == r'audio/mpeg': reply.abort()
-        #print(reply.url().toString())
-        #print( str_(reply.rawHeader(b'Content-Type')))
-        if 'javascript' in str_(reply.rawHeader(b'Content-Type')):
-            print(reply.url().toString())
-
-
-class MyWebPage(QWebPage):
-    """Reimplemented QWebPage to get User Agent Changing and multiple file uploads facility"""
-    def __init__(self, parent, networkmanager):
-        QWebPage.__init__(self, parent)
-        self.setForwardUnsupportedContent(True)
-        self.setLinkDelegationPolicy(2)
-        self.setNetworkAccessManager(networkmanager)
-        #self.useragent_desktop = QWebPage.userAgentForUrl(self, QUrl())
-        self.useragent_desktop = "Mozilla/5.0 (X11; Linux) AppleWebKit/538.1 (KHTML, like Gecko) Quartz Safari/538.1"
-        self.useragent_mobile = 'Nokia 5130'
-
-    def userAgentForUrl(self, url):
-        """ This is called when it loads any page, to get useragent string"""
-        if useragent_mode == 'Mobile':
-            return self.useragent_mobile
-        elif useragent_mode == 'Custom':
-            return useragent_custom
-        return self.useragent_desktop
+class MyWebPage(QWebEnginePage):
+    """Reimplemented  to get User Agent Changing and multiple file uploads facility"""
+    def __init__(self, parent):
+        QWebEnginePage.__init__(self, parent)
+        # self.setForwardUnsupportedContent(True) idk
+        # self.setLinkDelegationPolicy(2) idk x2
+        
+        # self.useragent_desktop = QWebEnginePage.userAgentForUrl(self, QUrl())
 
     def extension(self, extension, option, output):
         """ Allows to upload files where multiple selections are allowed """
-        if extension == QWebPage.ChooseMultipleFilesExtension:
+        if extension == QWebEnginePage.ChooseMultipleFilesExtension:
             output.fileNames, sel_filter = QFileDialog.getOpenFileNames(self.view(), "Select Files to Upload", homedir)
             return True
-        elif extension == QWebPage.ErrorPageExtension:
+        elif extension == QWebEnginePage.ErrorPageExtension:
             error_dict = {'0':'QtNetwork', '1':'HTTP', '2':'Webkit'}
             print("URL : {}".format(option.url.toString()))
             print("{} Error {} : {}".format(error_dict[str(option.domain)], option.error, option.errorString))
@@ -144,29 +74,44 @@ class MyWebPage(QWebPage):
 
     def shouldInterruptJavaScript(self):
         return True
+    
+    def acceptNavigationRequest(self, qurl, navtype, mainframe):
+        MyWebView.openLink(MyWebView, qurl) # wtf im doing, there is no way that this will work
 
-
-class MyWebView(QWebView):
+class MyWebView(QWebEngineView):
     ''' parameters
         @parent -> QTabWidget
-        @networkmanager -> NetworkAccessManager
     '''
-    windowCreated = pyqtSignal(QWebView)
+    windowCreated = pyqtSignal(QWebEngineView)
     videoListRequested = pyqtSignal()
-    def __init__(self, parent, networkmanager):
-        QWebView.__init__(self, parent)
-        page = MyWebPage(self, networkmanager)
+    def __init__(self, parent,):
+        QWebEngineView.__init__(self, parent)
+        self.useragent_desktop = "Mozilla/5.0 (X11; Linux) AppleWebKit/538.1 (KHTML, like Gecko) Quartz Safari/538.1"
+        self.useragent_mobile = 'Nokia 5130' #wtf bruh
+        interceptor = RequestInterceptor()
+        adblockProfile = QWebEngineProfile()
+        adblockProfile.setUrlRequestInterceptor(interceptor)
+        if useragent_mode == 'Mobile':
+            adblockProfile.setHttpUserAgent(self.useragent_mobile)
+        elif useragent_mode == 'Custom':
+            adblockProfile.setHttpUserAgent(useragent_custom)
+        elif useragent_mode == 'Desktop':
+            adblockProfile.setHttpUserAgent(self.useragent_desktop)
+        adblockProfile.setPersistentCookiesPolicy(QWebEngineProfile.ForcePersistentCookies)
+        adblockProfile.setCachePath("Cache")
+        adblockProfile.setPersistentStoragePath("Storage")
+        page = MyWebPage(adblockProfile) #hmm no self?
         self.setPage(page)
         self.edit_mode_on = False
         self.loading = False
         self.progressVal = 0
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.reload)
-        page.contentsChanged.connect(self.resetTimer)
+        # page.contentsChanged.connect(self.resetTimer) :( https://stackoverflow.com/a/41974756
         self.loadStarted.connect(self.onLoadStart)
         self.loadFinished.connect(self.onLoadFinish)
         self.loadProgress.connect(self.onLoadProgress)
-        self.linkClicked.connect(self.openLink)
+        # self.linkClicked.connect(self.openLink) reimplemented in myWebPage
 
     def onLoadStart(self):
         self.loading = True
@@ -193,7 +138,7 @@ class MyWebView(QWebView):
 
     def createWindow(self, windowtype):
         """This function is internally called when new window is requested.
-           This will must return a QWebView object"""
+           This will must return a QWebEngineView object"""
         global block_popups
         if block_popups:
             return None # Replace this by "return self" if want to open new tab in current tab.
@@ -219,25 +164,25 @@ class MyWebView(QWebView):
         self.rel_pos = event.pos()
         menu = QMenu(self)
         if result.isContentSelected():
-           copy_text_action = self.pageAction(QWebPage.Copy)
+           copy_text_action = self.pageAction(QWebEnginePage.Copy)
            copy_text_action.setIcon(QIcon(':/edit-copy.png'))
            menu.addAction(copy_text_action)
         if not result.imageUrl().isEmpty():
            menu.addAction(QIcon(':/document-save.png'), "Save Image", self.saveImageToDisk)
-           download_image_action = self.pageAction(QWebPage.DownloadImageToDisk)
+           download_image_action = self.pageAction(QWebEnginePage.DownloadImageToDisk)
            download_image_action.setText("Download Image")
            download_image_action.setIcon(QIcon(':/image-x-generic.png'))
            menu.addAction(download_image_action)
            menu.addSeparator()
         if not result.linkUrl().isEmpty():
-           open_new_win_action = self.pageAction(QWebPage.OpenLinkInNewWindow)
+           open_new_win_action = self.pageAction(QWebEnginePage.OpenLinkInNewWindow)
            open_new_win_action.setText('Open in New Tab')
            open_new_win_action.setIcon(QIcon(':/list-add.png'))
            menu.addAction(open_new_win_action)
-           copy_link_action = self.pageAction(QWebPage.CopyLinkToClipboard)
+           copy_link_action = self.pageAction(QWebEnginePage.CopyLinkToClipboard)
            copy_link_action.setIcon(QIcon(':/quartz.png'))
            menu.addAction(copy_link_action)
-           download_link_action = self.pageAction(QWebPage.DownloadLinkToDisk)
+           download_link_action = self.pageAction(QWebEnginePage.DownloadLinkToDisk)
            download_link_action.setText('Download Link')
            download_link_action.setIcon(QIcon(':/document-save.png'))
            menu.addAction(download_link_action)
